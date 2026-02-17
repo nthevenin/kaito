@@ -1,5 +1,3 @@
-
-```yaml
 name: preset-common-image-build
 
 description: "A reusable workflow for building preset images"
@@ -53,16 +51,6 @@ runs:
       with:
         submodules: true
         fetch-depth: 0
-
-    - name: Install Azure CLI latest
-      run: |
-        if ! which az > /dev/null; then
-          echo "Azure CLI not found. Installing..."
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-        else
-          echo "Azure CLI already installed."
-        fi
-      shell: bash
 
     - name: Check Available Disk Space
       run: |
@@ -190,4 +178,3 @@ runs:
           --output type=image,name=ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$MODEL_TAG,push=true,compression=zstd \
           -f ./docker/presets/models/tfs/Dockerfile .
       shell: bash
-```

@@ -20,6 +20,7 @@ env:
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   determine-models:
@@ -77,15 +78,6 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-
-      - name: Install Azure CLI latest
-        run: |
-          if ! which az > /dev/null; then
-              echo "Azure CLI not found. Installing..."
-              curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-          else
-              echo "Azure CLI already installed."
-          fi
 
       - name: Ensure Docker is Installed
         run: |
@@ -168,21 +160,15 @@ jobs:
           sudo setfacl -dm g::rwx /mnt/storage  # Default group permissions
           sudo setfacl -dm o::rx /mnt/storage   # Default others permissions
 
-      - name: Authenticate to ACR
-        run: |
-          az login --identity
-          az acr login -n ${{ secrets.PROD_1ES_ACR_USERNAME }}
-
       - name: Call Reusable Workflow - Build Image
         uses: ./.github/actions/build-image-action
         with:
           weights_dir: ${{ env.WEIGHTS_DIR }}
           branch_name: ${{ env.BRANCH_NAME }}
-          image_name: unlisted/aks/kaito/kaito-${{ matrix.model.name }}
+          image_name: kaito-${{ matrix.model.name }}
           image_tag: ${{ matrix.model.tag }}
-          acr_name: ${{ secrets.PROD_1ES_ACR_USERNAME }}
-          acr_username: ${{ secrets.PROD_1ES_ACR_USERNAME }}
-          acr_password: ${{ secrets.PROD_1ES_ACR_PASSWORD }}
+          ghcr_username: ${{ github.actor }}
+          ghcr_token: ${{ secrets.GITHUB_TOKEN }}
           model_name: ${{ matrix.model.name }}
           model_type: ${{ matrix.model.type }}
           model_version: ${{ matrix.model.version }}
