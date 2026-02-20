@@ -15,6 +15,15 @@ inputs:
   image_tag:
     description: "Image tag"
     required: true
+  acr_name:
+    description: "ACR name"
+    required: true
+  acr_username:
+    description: "ACR username"
+    required: true
+  acr_password:
+    description: "ACR password"
+    required: true
   model_name:
     description: "Model name"
     required: true
@@ -47,10 +56,20 @@ runs:
   using: "composite"
   steps:
     - name: Checkout
-      uses: actions/checkout@v4.1.6
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       with:
         submodules: true
         fetch-depth: 0
+
+    - name: Install Azure CLI latest
+      run: |
+        if ! which az > /dev/null; then
+          echo "Azure CLI not found. Installing..."
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        else
+          echo "Azure CLI already installed."
+        fi
+      shell: bash
 
     - name: Check Available Disk Space
       run: |
@@ -114,27 +133,31 @@ runs:
         echo "${{ inputs.ghcr_token }}" | docker login ghcr.io -u ${{ inputs.ghcr_username }} --password-stdin
       shell: bash
 
-    - name: Check if Image exists in target GHCR
+    - name: Check if Image exists in target registries
       id: check_test_image
       run: |
+        ACR_NAME=${{ inputs.acr_name }}
         GHCR_USERNAME=${{ inputs.ghcr_username }}
         IMAGE_NAME=${{ inputs.image_name }}
         TAG=${{ inputs.image_tag }}
 
-        # Use buildx imagetools to inspect the image
-        if docker buildx imagetools inspect ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$TAG > /dev/null 2>&1; then
-          echo "Image ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$TAG exists in GHCR."
-          echo "IMAGE_EXISTS=true" >> $GITHUB_OUTPUT
-        else
-          echo "Image ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$TAG does not exist in GHCR."
-          echo "IMAGE_EXISTS=false" >> $GITHUB_OUTPUT
-        fi
+        # Check ACR (use original logic - always build for now)
+        echo "IMAGE_EXISTS=false" >> $GITHUB_OUTPUT
+        
+        # Optional: Check GHCR existence (currently disabled to ensure builds)
+        # if docker buildx imagetools inspect ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$TAG > /dev/null 2>&1; then
+        #   echo "Image ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$TAG exists in GHCR."
+        #   echo "IMAGE_EXISTS=true" >> $GITHUB_OUTPUT
+        # fi
       shell: bash
 
     - name: Build model image
       if: steps.check_test_image.outputs.IMAGE_EXISTS == 'false' && inputs.model_name != 'base'
       run: |
         PR_BRANCH=${{ inputs.branch_name }}
+        ACR_NAME=${{ inputs.acr_name }}
+        ACR_USERNAME=${{ inputs.acr_username }}
+        ACR_PASSWORD=${{ inputs.acr_password }}
         IMAGE_NAME=${{ inputs.image_name }}
         MODEL_NAME=${{ inputs.model_name }}
         MODEL_TYPE=${{ inputs.model_type }}
@@ -146,7 +169,19 @@ runs:
         HF_TOKEN=${{ inputs.hf_token }}
         GHCR_USERNAME=${{ inputs.ghcr_username }}
 
-        # Use shared script to build and push OCI artifact to GHCR
+        # Login to ACR registry
+        echo $ACR_PASSWORD | docker login $ACR_NAME.azurecr.io -u $ACR_USERNAME --password-stdin
+
+        # Use shared script to build and push OCI artifact to both ACR and GHCR
+        # First push to ACR (original)
+        docker/presets/models/tfs/build_oci_artifact.sh \
+          "$MODEL_VERSION_URL" \
+          "$IMAGE_NAME" \
+          "$ACR_NAME.azurecr.io" \
+          "$MODEL_TAG" \
+          "$HF_TOKEN"
+        
+        # Then push to GHCR (new)
         docker/presets/models/tfs/build_oci_artifact.sh \
           "$MODEL_VERSION_URL" \
           "$GHCR_USERNAME/$IMAGE_NAME" \
@@ -160,6 +195,9 @@ runs:
       if: steps.check_test_image.outputs.IMAGE_EXISTS == 'false' && inputs.model_name == 'base'
       run: |
         PR_BRANCH=${{ inputs.branch_name }}
+        ACR_NAME=${{ inputs.acr_name }}
+        ACR_USERNAME=${{ inputs.acr_username }}
+        ACR_PASSWORD=${{ inputs.acr_password }}
         IMAGE_NAME=${{ inputs.image_name }}
         MODEL_NAME=${{ inputs.model_name }}
         MODEL_TYPE=${{ inputs.model_type }}
@@ -171,10 +209,15 @@ runs:
         HF_TOKEN=${{ inputs.hf_token }}
         GHCR_USERNAME=${{ inputs.ghcr_username }}
 
+        # Login to ACR registry
+        echo $ACR_PASSWORD | docker login $ACR_NAME.azurecr.io -u $ACR_USERNAME --password-stdin
+
+        # Build and push to both registries
         docker buildx build \
           --builder img-builder \
           --build-arg VERSION=$MODEL_TAG \
           --build-arg MODEL_TYPE=$MODEL_TYPE \
+          --output type=image,name=$ACR_NAME.azurecr.io/$IMAGE_NAME:$MODEL_TAG,push=true,compression=zstd \
           --output type=image,name=ghcr.io/$GHCR_USERNAME/$IMAGE_NAME:$MODEL_TAG,push=true,compression=zstd \
           -f ./docker/presets/models/tfs/Dockerfile .
       shell: bash
